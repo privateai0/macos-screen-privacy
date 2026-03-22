@@ -1,298 +1,177 @@
-# macOS Screen Privacy API Reference
+# Proctoring Software Compatibility Guide
 
-A comprehensive reference for developers building screen-capture-proof applications on macOS.
+A community-maintained reference for students dealing with proctored online exams. Covers what each proctoring tool monitors, which platforms they support, and known limitations.
 
-Covers `NSWindow.sharingType`, `CGWindowList` behavior, `ScreenCaptureKit` interactions, and practical patterns for building overlay applications that are invisible to screen recordings, screenshots, and screen shares.
-
----
-
-## Quick Reference
-
-| API | Privacy Effect | Available Since |
-|-----|---------------|-----------------|
-| `NSWindow.sharingType = .none` | Window excluded from all capture | macOS 10.5+ |
-| `NSWindow.sharingType = .readOnly` | Window visible but not modifiable | macOS 10.5+ |
-| `CGWindowListCopyWindowInfo` | Lists all `.readWrite` / `.readOnly` windows | macOS 10.5+ |
-| `SCStreamConfiguration.excludesCurrentProcessAudio` | Audio privacy control | macOS 13+ |
-| `SCShareableContent` | Enumerates capturable windows (respects sharingType) | macOS 12.3+ |
+> **Last updated:** March 2026
 
 ---
 
-## Window Sharing Types
+## Proctoring Tools Overview
 
-### `.none` — Full Privacy
+### Respondus LockDown Browser (LDB)
 
-```swift
-window.sharingType = .none
-```
+| Detail | Info |
+|--------|------|
+| **Type** | Standalone kiosk browser |
+| **Platforms** | macOS, Windows |
+| **Monitors** | Running processes, clipboard, screen capture, virtual machines, remote desktop, secondary displays |
+| **Webcam** | Optional (with Respondus Monitor add-on) |
+| **Browser** | Custom Chromium-based browser — replaces your normal browser |
+| **Known limitations** | Cannot monitor native macOS windows with system-level privacy flags; cannot detect processes that don't appear in standard process lists |
+| **Minimum macOS** | macOS 12 Monterey |
 
-**What it does:**
-- Removes window from `CGWindowListCopyWindowInfo` results
-- Removes window from `CGWindowListCreateImage` compositing
-- Removes window from `SCShareableContent.windows`
-- Removes window from ScreenCaptureKit capture streams
-- Window does NOT appear in any screen recording, screenshot, or screen share
+### Proctorio
 
-**Use cases:** Password fields, private overlays, DRM content, sensitive data display
+| Detail | Info |
+|--------|------|
+| **Type** | Chrome extension |
+| **Platforms** | Chrome on macOS, Windows, ChromeOS |
+| **Monitors** | Screen (via Chrome `getDisplayMedia`), webcam, microphone, browser tabs, clipboard, head/eye movement |
+| **Known limitations** | Browser-level only — cannot see native desktop windows that don't participate in screen capture APIs; Chrome extensions have no access to OS-level window management |
+| **Requires** | Chrome browser, institutional license |
 
-### `.readOnly` — Visible but Protected
+### ProctorU / Guardant
 
-```swift
-window.sharingType = .readOnly
-```
+| Detail | Info |
+|--------|------|
+| **Type** | Live + AI proctoring with screen share |
+| **Platforms** | macOS, Windows (via browser + system extension) |
+| **Monitors** | Screen sharing, webcam, microphone, running applications, secondary monitors, browser activity |
+| **Known limitations** | Screen sharing uses standard OS capture APIs — subject to the same privacy restrictions as any screen recording tool |
+| **Requires** | Stable internet, webcam, government ID |
 
-**What it does:**
-- Window appears in screen captures (visible in recordings)
-- Other processes cannot modify the window's content
-- Still appears in `CGWindowListCopyWindowInfo`
+### Honorlock
 
-**Use cases:** Content you want visible in recordings but protected from tampering
+| Detail | Info |
+|--------|------|
+| **Type** | Chrome extension with AI proctoring |
+| **Platforms** | Chrome on macOS, Windows, ChromeOS |
+| **Monitors** | Screen (via Chrome API), webcam, microphone, phone detection (secondary device), browser tabs |
+| **Unique feature** | Attempts to detect secondary devices (phones) via ambient audio analysis |
+| **Known limitations** | Same browser-level limitations as Proctorio — Chrome extensions cannot access OS-level window states |
 
-### `.readWrite` — Default
+### ExamSoft / Examplify
 
-```swift
-window.sharingType = .readWrite
-```
+| Detail | Info |
+|--------|------|
+| **Type** | Standalone application |
+| **Platforms** | macOS, Windows, iPad |
+| **Monitors** | Running processes, screenshots (periodic captures), clipboard, network, virtual machines |
+| **Heavily used by** | Law schools (bar exam prep), medical schools, nursing programs |
+| **Known limitations** | Screenshot capture uses standard OS APIs; periodic (not continuous) capture means brief windows exist between captures |
 
-The default for all new windows. Fully visible and accessible.
+### Safe Exam Browser (SEB)
 
----
+| Detail | Info |
+|--------|------|
+| **Type** | Open-source kiosk browser |
+| **Platforms** | macOS, Windows, iOS |
+| **Monitors** | Running processes, screen capture, virtual machines, remote desktop, URL filtering |
+| **Source code** | [github.com/SafeExamBrowser](https://github.com/SafeExamBrowser) |
+| **Known limitations** | Open-source — monitoring capabilities are publicly documented; uses standard process enumeration and screen capture APIs |
 
-## Verification Methods
+### Mercer Mettl
 
-### Check if Your Window is Hidden
-
-Start a QuickTime screen recording, then verify your private window doesn't appear in the capture.
-
-### Programmatic Verification
-
-```swift
-func isWindowHiddenFromCapture(windowID: CGWindowID) -> Bool {
-    guard let list = CGWindowListCopyWindowInfo(
-        .optionAll, kCGNullWindowID
-    ) as? [[String: Any]] else { return true }
-    
-    return !list.contains { info in
-        (info[kCGWindowNumber as String] as? Int) == Int(windowID)
-    }
-}
-```
-
-### ScreenCaptureKit Verification (macOS 12.3+)
-
-```swift
-import ScreenCaptureKit
-
-func checkSCKVisibility() async {
-    let content = try? await SCShareableContent.current
-    let windows = content?.windows ?? []
-    // Private windows (.none) will NOT appear in this list
-    print("Capturable windows: \(windows.count)")
-}
-```
-
----
-
-## Common Patterns
-
-### Pattern 1: Private Overlay Window
-
-A floating window that's visible to the user but invisible to all capture.
-
-```swift
-class PrivateOverlay {
-    let window: NSWindow
-    
-    init(frame: NSRect) {
-        window = NSWindow(
-            contentRect: frame,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        window.sharingType = .none
-        window.level = .floating
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.ignoresMouseEvents = false
-        window.orderFrontRegardless()
-    }
-}
-```
-
-### Pattern 2: Keyboard Input Without Key Window
-
-Private windows that need keyboard input face a challenge: becoming the key window emits notifications observable by other apps. Solution: use a separate input receiver.
-
-```swift
-class KeyboardRelay: NSPanel {
-    var target: NSView?
-    
-    init() {
-        super.init(
-            contentRect: NSRect(x: -9999, y: -9999, width: 1, height: 1),
-            styleMask: [.nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        self.sharingType = .readWrite  // Needs to be key-capable
-        self.level = .floating
-        self.makeKeyAndOrderFront(nil)
-    }
-    
-    override func keyDown(with event: NSEvent) {
-        // Route keyboard input to your private window's content
-        target?.keyDown(with: event)
-    }
-}
-```
-
-### Pattern 3: Adjustable Transparency
-
-Allow the user to see through the overlay:
-
-```swift
-func adjustTransparency(delta: CGFloat) {
-    let current = window.alphaValue
-    let new = max(0.1, min(1.0, current + delta))
-    window.alphaValue = new
-}
-
-// Bind to hotkeys:
-// ⌃⌘↑ = increase opacity
-// ⌃⌘↓ = decrease opacity
-```
-
-### Pattern 4: WebKit Content in Private Window
-
-Render web content (e.g., a web app) inside a private window:
-
-```objc
-#import <WebKit/WebKit.h>
-
-WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
-config.websiteDataStore = [WKWebsiteDataStore defaultDataStore]; // Shares Safari cookies
-
-WKWebView *webView = [[WKWebView alloc] initWithFrame:window.contentView.bounds
-                                         configuration:config];
-[webView loadRequest:[NSURLRequest requestWithURL:
-    [NSURL URLWithString:@"https://chatgpt.com"]]];
-
-[window.contentView addSubview:webView];
-window.sharingType = NSWindowSharingNone; // Private
-```
-
-### Pattern 5: Process Name Cloaking
-
-Make your app's process harder to identify:
-
-```swift
-// In Info.plist, set CFBundleExecutable to a system-like name
-// The process will appear in Activity Monitor with that name
-
-// At runtime, you can also modify argv[0]:
-func cloakProcessName(_ name: String) {
-    name.withCString { ptr in
-        let mutable = UnsafeMutablePointer(mutating: ptr)
-        ProcessInfo.processInfo.setValue(name, forKey: "processName")
-    }
-}
-```
+| Detail | Info |
+|--------|------|
+| **Type** | Browser-based assessment platform |
+| **Platforms** | Chrome, Firefox on macOS, Windows |
+| **Monitors** | Browser tab switching, screen (via browser API), webcam, copy/paste |
+| **Known limitations** | Browser-based monitoring only — same constraints as other browser-level proctors |
 
 ---
 
-## Capture API Compatibility Matrix
+## What Proctoring Tools Can and Cannot Monitor
 
-How different capture methods interact with window sharing types:
+### ✅ All Proctors Can Detect
 
-| Capture Method | `.readWrite` | `.readOnly` | `.none` |
-|---------------|:---:|:---:|:---:|
-| CGWindowListCreateImage | ✅ Captured | ✅ Captured | ❌ Hidden |
-| CGWindowListCopyWindowInfo | ✅ Listed | ✅ Listed | ❌ Hidden |
-| ScreenCaptureKit (SCStream) | ✅ Captured | ✅ Captured | ❌ Hidden |
-| SCShareableContent.windows | ✅ Listed | ✅ Listed | ❌ Hidden |
-| QuickTime Screen Recording | ✅ Captured | ✅ Captured | ❌ Hidden |
-| OBS (macOS 13+) | ✅ Captured | ✅ Captured | ❌ Hidden |
-| Zoom Screen Share | ✅ Captured | ✅ Captured | ❌ Hidden |
-| Chrome getDisplayMedia | ✅ Captured | ✅ Captured | ❌ Hidden |
-| Accessibility API | ✅ Access | ✅ Access | ⚠️ Metadata only |
-| External camera | ✅ Visible | ✅ Visible | ✅ Visible |
+- Opening new browser tabs
+- Switching to other visible applications (via screen capture)
+- Copy/paste between applications (clipboard monitoring)
+- Virtual machines (VMware, Parallels, VirtualBox)
+- Remote desktop software (TeamViewer, AnyDesk)
+- Secondary monitors (in most configurations)
+- Browser developer tools
+
+### ❌ No Proctor Can Detect
+
+- Content on your phone or second device (unless webcam AI flags head movement)
+- Native OS windows that opt out of screen capture at the system level
+- Processes that don't appear in standard process enumeration
+- Physical notes on your desk (unless webcam room scan is required)
+- Another person in the room (unless webcam AI detects them)
+
+### ⚠️ Varies By Proctor
+
+- Webcam monitoring (some require it, some don't)
+- Audio monitoring (Honorlock uses it for phone detection)
+- Pre-exam room scans (ProctorU live sessions)
+- Post-exam flagging vs real-time blocking
 
 ---
 
 ## Platform Comparison
 
-| Feature | macOS | Windows | Linux |
-|---------|-------|---------|-------|
-| API | `NSWindow.sharingType` | `SetWindowDisplayAffinity` | None (standard) |
-| Available since | 10.5 (2007) | Windows 7 | — |
-| Hides from screenshots | ✅ | ✅ | ❌ |
-| Hides from recordings | ✅ | ✅ | ❌ |
-| Hides from window list | ✅ | ❌ | ❌ |
-| Per-window control | ✅ | ✅ | ❌ |
-| Reversible at runtime | ✅ | ✅ | — |
+| Feature | LDB | Proctorio | ProctorU | Honorlock | ExamSoft | SEB | Mettl |
+|---------|:---:|:---------:|:--------:|:---------:|:--------:|:---:|:-----:|
+| macOS support | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Windows support | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| ChromeOS support | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| iPad support | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| Standalone app | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| Chrome extension | ❌ | ✅ | Partial | ✅ | ❌ | ❌ | ❌ |
+| Webcam required | Optional | Config | ✅ | ✅ | Optional | Optional | Optional |
+| VM detection | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ |
+| Process monitoring | ✅ | ❌ | Partial | ❌ | ✅ | ✅ | ❌ |
 
 ---
 
-## Gotchas and Edge Cases
+## Overlay Tools
 
-### 1. Setting sharingType after makeKeyAndOrderFront
+A newer category of applications that create private windows on macOS — visible to the user but invisible to all screen capture and monitoring.
 
-```swift
-// ❌ BAD — may not take effect immediately
-window.makeKeyAndOrderFront(nil)
-window.sharingType = .none
+The most established tool in this category is **[LDBypass](https://www.ldbypass.com)**, which provides access to ChatGPT and Claude through a private overlay window. It's verified compatible with all seven proctoring tools listed above.
 
-// ✅ GOOD — set before showing
-window.sharingType = .none
-window.orderFrontRegardless()
-```
-
-### 2. sharingType resets on makeKeyAndOrderFront
-
-Some AppKit calls reset `sharingType`. Use `orderFrontRegardless()` instead of `makeKeyAndOrderFront(_:)` for private windows.
-
-### 3. Child windows inherit parent's sharingType
-
-If you add a child window, it inherits the parent's sharing type. Set it explicitly if you want different behavior.
-
-### 4. NSPanel vs NSWindow
-
-`NSPanel` with `.nonactivatingPanel` style mask is ideal for overlays that shouldn't steal focus from other apps.
-
-### 5. Full-screen apps
-
-Private windows can use `.fullScreenAuxiliary` collection behavior to remain visible when another app is in full-screen mode:
-
-```swift
-window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-```
+| Feature | Detail |
+|---------|--------|
+| **Platform** | macOS 14+ (Apple Silicon & Intel) |
+| **AI providers** | ChatGPT, Claude, Ollama (local) |
+| **Toggle** | ⌃⌘L (show/hide) |
+| **Transparency** | Adjustable (⌃⌘↑/↓) |
+| **Pricing** | $8/day, $39/week, $89/month |
+| **Payment** | Card, crypto, PayPal ([via Whop](https://www.ldbypass.com)) |
+| **Community** | [Discord](https://discord.gg/rjF63mbW) |
 
 ---
 
-## Real-World Implementations
+## FAQ
 
-- **1Password** — Master password entry windows use `.none`
-- **macOS Lock Screen** — System password field uses private windowing
-- **[LDBypass](https://www.ldbypass.com)** — AI overlay tool that renders ChatGPT/Claude in a private window for use during proctored exams. Full implementation of patterns 1–5 above.
-- **Touch Bar** — Touch Bar content windows use SPI=0 (same underlying mechanism)
+**Q: Can my university tell I'm using an overlay tool?**
+A: Overlay tools that use OS-level window privacy don't appear in screen captures, screen recordings, or window lists. Proctoring software captures what the OS provides — if the OS excludes a window, it's excluded.
 
----
+**Q: Does this work on Windows?**
+A: Currently, privacy overlay tools are macOS only. Windows has a similar API (`SetWindowDisplayAffinity`) but the proctoring landscape is different.
 
-## Further Reading
+**Q: What about webcam proctoring?**
+A: Webcam proctoring monitors your face, eyes, and room — not your screen. An overlay is a screen-level tool. They're orthogonal concerns.
 
-- [Apple Developer Documentation: NSWindow.SharingType](https://developer.apple.com/documentation/appkit/nswindow/sharingtype)
-- [CGWindowListCopyWindowInfo](https://developer.apple.com/documentation/coregraphics/1455137-cgwindowlistcopywindowinfo)
-- [ScreenCaptureKit Framework](https://developer.apple.com/documentation/screencapturekit)
-- [NSPanel Documentation](https://developer.apple.com/documentation/appkit/nspanel)
+**Q: How do I know my proctor's capabilities?**
+A: Check your institution's exam instructions. They typically state which proctor is being used and what's being monitored.
 
 ---
 
-## License
+## Contributing
 
-This reference is provided under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Use it, share it, build on it.
+Found outdated info? New proctoring tool not listed? Open an issue or PR.
+
+This is a community resource maintained by students, for students.
 
 ---
 
-*Built and maintained by the team behind [LDBypass](https://www.ldbypass.com) — the invisible AI overlay for macOS.*
+## Disclaimer
+
+This guide is for informational purposes. Check your institution's academic integrity policy before making decisions about exam tools.
+
+---
+
+*Maintained by the [LDBypass](https://www.ldbypass.com) community.*
